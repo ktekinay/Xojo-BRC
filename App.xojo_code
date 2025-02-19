@@ -148,6 +148,15 @@ Inherits ConsoleApplication
 		  #pragma NilObjectChecking false
 		  #pragma StackOverflowChecking false
 		  
+		  const kEOL as integer = 10
+		  const kHyphen as integer = 45
+		  const kDot as integer = 46
+		  const kZero as integer = 48
+		  const kSemicolon as integer = 59
+		  
+		  var sw as new Stopwatch_MTC
+		  sw.Start
+		  
 		  var cities() as string = kCities.Split( &uA )
 		  
 		  cities.Shuffle
@@ -163,52 +172,72 @@ Inherits ConsoleApplication
 		  var status as new ConsoleStatus2
 		  status.PercentMessage "Creating " + kFileName, rows
 		  
-		  const kBuilderLimit as integer = 1000000
+		  var outMB as new MemoryBlock( 1000000 )
+		  var outPtr as ptr = outMB
 		  
-		  var builder() as string
+		  var outMBIndex as integer = 0
+		  
+		  const kStatusLimit as integer = 100000
 		  
 		  for row as integer = 1 to rows
 		    var cityIndex as integer = r.InRange( 0, cities.LastIndex )
 		    var city as string = cities( cityIndex )
+		    var cityBytes as integer = city.Bytes
 		    
-		    var tempInt as integer = r.InRange( 0, 1999 ) - 1000
-		    var absTempInt as integer = abs( tempInt )
-		    var tempString as string = absTempInt.ToString()
-		    
-		    select case absTempInt
-		    case 0
-		    case  is < 10
-		      tempString = "0." + tempString
-		    case is < 100
-		      tempString = tempString.Left( 1 ) + "." + tempString.Right( 1 )
-		    case else
-		      tempString = tempString.Left( 2 ) + "." + tempString.Right( 1 )
-		    end select
-		    
-		    if tempInt < 0 then
-		      tempString = "-" + tempString
+		    if ( outMBIndex + cityBytes + 10 ) >= outMB.Size then
+		      bs.Write outMB.StringValue( 0, outMBIndex )
+		      outMBIndex = 0
 		    end if
 		    
-		    var out as string = city + ";" + tempString
-		    builder.Add out
+		    outMB.StringValue( outMBIndex, cityBytes ) = city
+		    outMBIndex = outMBIndex + cityBytes
 		    
-		    if builder.Count = kBuilderLimit then
-		      bs.Write String.FromArray( builder, &uA ) 
-		      bs.Write &uA
-		      builder.RemoveAll
-		      
+		    outPtr.Byte( outMBIndex ) = kSemicolon
+		    outMBIndex = outMBIndex + 1
+		    
+		    if r.InRange( 0, 4 ) = 0 then
+		      outPtr.Byte( outMBIndex ) = kHyphen
+		      outMBIndex = outMBIndex + 1
+		    end if
+		    
+		    var temp as integer = r.InRange( 0, 999 )
+		    var t1 as integer = temp \ 100
+		    var t2 as integer = ( temp \ 10 ) mod 10
+		    var t3 as integer = temp mod 10
+		    
+		    if t1 <> 0 then
+		      outPtr.Byte( outMBIndex ) = t1 + kZero
+		      outMBIndex = outMBIndex + 1
+		    end if
+		    
+		    outPtr.Byte( outMBIndex ) = t2 + kZero
+		    outMBIndex = outMBIndex + 1
+		    
+		    outPtr.Byte( outMBIndex ) = kDot
+		    outMBIndex = outMBIndex + 1
+		    
+		    outPtr.Byte( outMBIndex ) = t3 + kZero
+		    outMBIndex = outMBIndex + 1
+		    
+		    outPtr.Byte( outMBIndex ) = kEOL
+		    outMBIndex = outMBIndex + 1
+		    
+		    if ( row mod kStatusLimit ) = 0 then
 		      status.Percent row
 		    end if
 		  next
 		  
-		  if builder.Count <> 0 then
-		    bs.Write String.FromArray( builder, &uA)
-		    bs.Write &uA
+		  if outMBIndex <> 0 then
+		    bs.Write outMB.StringValue( 0, outMBIndex )
 		  end if
 		  
 		  status.Finish
 		  
 		  bs.Close
+		  
+		  sw.Stop
+		  Print "Created in " + sw.ElapsedSeconds.ToString( "#,##0.000" ) + " s"
+		  
 		  
 		End Sub
 	#tag EndMethod
