@@ -10,14 +10,14 @@ Inherits ConsoleApplication
 		    return 0
 		  end if
 		  
+		  var jobs as integer = parser.IntegerValue( kOptionJobs, System.CoreCount - 1 )
+		  jobs = min( jobs, System.CoreCount )
+		  
 		  if parser.IntegerValue( kOptionCreate, 0 ) > 0 then
-		    CreateInput( parser.IntegerValue( kOptionCreate ) )
+		    CreateInput( parser.IntegerValue( kOptionCreate ), jobs )
 		    
 		    return 0
 		  end if
-		  
-		  var jobs as integer = parser.IntegerValue( kOptionJobs, System.CoreCount - 1 )
-		  jobs = min( jobs, System.CoreCount )
 		  
 		  #pragma BoundsChecking false
 		  #pragma NilObjectChecking false
@@ -26,7 +26,7 @@ Inherits ConsoleApplication
 		  'RunParseTest()
 		  'RunHashTest()
 		  
-		  var f as FolderItem = InputFile
+		  var f as FolderItem = InputFile( jobs )
 		  
 		  var sw as new Stopwatch_MTC
 		  sw.Start
@@ -140,20 +140,7 @@ Inherits ConsoleApplication
 
 
 	#tag Method, Flags = &h21
-		Private Shared Sub CreateInput(rows As Integer)
-		  #if not DebugBuild then
-		    #pragma BackgroundTasks false
-		  #endif
-		  #pragma BoundsChecking false
-		  #pragma NilObjectChecking false
-		  #pragma StackOverflowChecking false
-		  
-		  const kEOL as integer = 10
-		  const kHyphen as integer = 45
-		  const kDot as integer = 46
-		  const kZero as integer = 48
-		  const kSemicolon as integer = 59
-		  
+		Private Shared Sub CreateInput(rows As Integer, jobs As Integer)
 		  var sw as new Stopwatch_MTC
 		  sw.Start
 		  
@@ -162,76 +149,45 @@ Inherits ConsoleApplication
 		  cities.Shuffle
 		  cities.ResizeTo 412
 		  
-		  var r as new Random
-		  
 		  var destFolder as FolderItem = DestFolder()
 		  var f as FolderItem = destFolder.Child( kFileName )
 		  
 		  var bs as BinaryStream = BinaryStream.Create( f, true )
 		  
-		  var status as new ConsoleStatus2
-		  status.PercentMessage "Creating " + kFileName, rows
+		  var threads() as CreateThread
 		  
-		  var outMB as new MemoryBlock( 1000000 )
-		  var outPtr as ptr = outMB
-		  
-		  var outMBIndex as integer = 0
-		  
-		  const kStatusLimit as integer = 100000
-		  
-		  for row as integer = 1 to rows
-		    var cityIndex as integer = r.InRange( 0, cities.LastIndex )
-		    var city as string = cities( cityIndex )
-		    var cityBytes as integer = city.Bytes
-		    
-		    if ( outMBIndex + cityBytes + 10 ) >= outMB.Size then
-		      bs.Write outMB.StringValue( 0, outMBIndex )
-		      outMBIndex = 0
-		    end if
-		    
-		    outMB.StringValue( outMBIndex, cityBytes ) = city
-		    outMBIndex = outMBIndex + cityBytes
-		    
-		    outPtr.Byte( outMBIndex ) = kSemicolon
-		    outMBIndex = outMBIndex + 1
-		    
-		    if r.InRange( 0, 4 ) = 0 then
-		      outPtr.Byte( outMBIndex ) = kHyphen
-		      outMBIndex = outMBIndex + 1
-		    end if
-		    
-		    var temp as integer = r.InRange( 0, 999 )
-		    var t1 as integer = temp \ 100
-		    var t2 as integer = ( temp \ 10 ) mod 10
-		    var t3 as integer = temp mod 10
-		    
-		    if t1 <> 0 then
-		      outPtr.Byte( outMBIndex ) = t1 + kZero
-		      outMBIndex = outMBIndex + 1
-		    end if
-		    
-		    outPtr.Byte( outMBIndex ) = t2 + kZero
-		    outMBIndex = outMBIndex + 1
-		    
-		    outPtr.Byte( outMBIndex ) = kDot
-		    outMBIndex = outMBIndex + 1
-		    
-		    outPtr.Byte( outMBIndex ) = t3 + kZero
-		    outMBIndex = outMBIndex + 1
-		    
-		    outPtr.Byte( outMBIndex ) = kEOL
-		    outMBIndex = outMBIndex + 1
-		    
-		    if ( row mod kStatusLimit ) = 0 then
-		      status.Percent row
-		    end if
+		  for i as integer = 1 to jobs
+		    threads.Add new CreateThread( cities, bs )
 		  next
 		  
-		  if outMBIndex <> 0 then
-		    bs.Write outMB.StringValue( 0, outMBIndex )
-		  end if
+		  var jobCount as integer = jobs
+		  var threadCount as integer 
+		  var remainder as integer = rows
 		  
-		  status.Finish
+		  do
+		    threadCount = remainder \ jobCount
+		    remainder = remainder mod jobCount
+		    
+		    if threadCount <> 0 then
+		      for i as integer = 1 to jobCount
+		        var t as CreateThread = threads( i - 1 )
+		        t.Count = t.Count + threadCount
+		      next
+		    end if
+		    
+		    jobCount = jobCount - 1
+		  loop until remainder = 0
+		  
+		  for each t as CreateThread in threads
+		    t.Start
+		  next
+		  
+		  App.DoEvents
+		  
+		  for each t as CreateThread in threads
+		    while t.ThreadState <> Thread.ThreadStates.NotRunning
+		    wend
+		  next
 		  
 		  bs.Close
 		  
@@ -277,14 +233,14 @@ Inherits ConsoleApplication
 	#tag EndMethod
 
 	#tag Method, Flags = &h21
-		Private Shared Function InputFile() As FolderItem
+		Private Shared Function InputFile(jobs As Integer) As FolderItem
 		  var destFolder as FolderItem = DestFolder()
 		  
 		  var f as FolderItem = destFolder.Child( kFileName )
 		  
 		  if not f.Exists then
 		    var rows as integer = if( DebugBuild, 1000000, 100000000 )
-		    CreateInput rows
+		    CreateInput rows, jobs
 		    
 		    f = new FolderItem( f )
 		  end if
@@ -309,67 +265,67 @@ Inherits ConsoleApplication
 
 	#tag Method, Flags = &h21
 		Private Shared Sub RunHashTest()
-		  var input as FolderItem = InputFile
-		  
-		  var tis as TextInputStream = TextInputStream.Open( input )
-		  var content as string = tis.ReadAll( Encodings.UTF8 ).Trim.ReplaceLineEndings( &uA )
-		  tis.Close
-		  
-		  var dict as new Dictionary
-		  
-		  var rows() as string = content.SplitBytes( &uA )
-		  
-		  for each row as string in rows
-		    var name as string = row.NthField( ";", 1 )
-		    var hash as UInt64 = FNVHash( name )
-		    
-		    if dict.HasKey( hash ) then
-		      var foundName as string = dict.Value( hash )
-		      if foundName <> name then
-		        Print "Collision! " + foundName + " != " + name
-		      end if
-		      
-		    else
-		      dict.Value( hash ) = name
-		      
-		    end if
-		  next
+		  'var input as FolderItem = InputFile
+		  '
+		  'var tis as TextInputStream = TextInputStream.Open( input )
+		  'var content as string = tis.ReadAll( Encodings.UTF8 ).Trim.ReplaceLineEndings( &uA )
+		  'tis.Close
+		  '
+		  'var dict as new Dictionary
+		  '
+		  'var rows() as string = content.SplitBytes( &uA )
+		  '
+		  'for each row as string in rows
+		  'var name as string = row.NthField( ";", 1 )
+		  'var hash as UInt64 = FNVHash( name )
+		  '
+		  'if dict.HasKey( hash ) then
+		  'var foundName as string = dict.Value( hash )
+		  'if foundName <> name then
+		  'Print "Collision! " + foundName + " != " + name
+		  'end if
+		  '
+		  'else
+		  'dict.Value( hash ) = name
+		  '
+		  'end if
+		  'next
 		End Sub
 	#tag EndMethod
 
 	#tag Method, Flags = &h21
 		Private Shared Sub RunParseTest()
-		  var input as FolderItem = InputFile
-		  
-		  var tis as TextInputStream = TextInputStream.Open( input )
-		  var content as string = tis.ReadAll( Encodings.UTF8 ).Trim.ReplaceLineEndings( &uA )
-		  tis.Close
-		  
-		  var testers() as ParseTestBase = ToArray( _
-		  new ParseTestV1, _
-		  new ParseTestV2, _
-		  new ParseTestV3, _
-		  new ParseTestV4 _
-		  )
-		  
-		  var lastResult as integer = -1
-		  
-		  for each t as ParseTestBase in testers
-		    var sw as new Stopwatch_MTC
-		    
-		    sw.Start
-		    var result as integer = t.Parse( content )
-		    sw.Stop
-		    
-		    var tName as string = Introspection.GetType( t ).Name
-		    print tName + ": " + result.ToString( "#,##0" ) + " (" + sw.ElapsedMicroseconds.ToString( "#,##0" ) + " µs" + ")"
-		    
-		    if lastResult = -1 then
-		      lastResult = result
-		    elseif result <> lastResult then
-		      print "... but it doesn't match!"
-		    end if
-		  next
+		  'var input as FolderItem = InputFile
+		  '
+		  'var tis as TextInputStream = TextInputStream.Open( input )
+		  'var content as string = tis.ReadAll( Encodings.UTF8 ).Trim.ReplaceLineEndings( &uA )
+		  'tis.Close
+		  '
+		  'var testers() as ParseTestBase = ToArray( _
+		  'new ParseTestV1, _
+		  'new ParseTestV2, _
+		  'new ParseTestV3, _
+		  'new ParseTestV4 _
+		  ')
+		  '
+		  'var lastResult as integer = -1
+		  '
+		  'for each t as ParseTestBase in testers
+		  'var sw as new Stopwatch_MTC
+		  '
+		  'sw.Start
+		  'var result as integer = t.Parse( content )
+		  'sw.Stop
+		  '
+		  'var tName as string = Introspection.GetType( t ).Name
+		  'print tName + ": " + result.ToString( "#,##0" ) + " (" + sw.ElapsedMicroseconds.ToString( "#,##0" ) + " µs" + ")"
+		  '
+		  'if lastResult = -1 then
+		  'lastResult = result
+		  'elseif result <> lastResult then
+		  'print "... but it doesn't match!"
+		  'end if
+		  'next
 		  
 		End Sub
 	#tag EndMethod
